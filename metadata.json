@@ -1,0 +1,1 @@
+{"observation_space": 4, "action_type": "discrete", "env_name": "CartPole-v1", "num_actions": 2}
