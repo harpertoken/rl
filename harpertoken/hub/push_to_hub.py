@@ -2,6 +2,7 @@ from huggingface_hub import HfApi, create_repo, metadata_update
 import os
 from ..models.model import CMAESAgent
 import numpy as np
+import json
 from datetime import datetime
 
 
@@ -17,8 +18,9 @@ def push_to_hub():
         create_repo(repo_id, exist_ok=True)
 
         # Load and prepare model
-        model_data = np.load("cmaes_model.npy", allow_pickle=True).item()
-        weights = model_data["weights"]
+        with open("metadata.json") as f:
+            metadata = json.load(f)
+        weights = np.load("weights.npy")
 
         # Initialize agent with the environment name
         agent = CMAESAgent(env_name="CartPole-v1")
@@ -33,12 +35,19 @@ def push_to_hub():
 
         # Save model locally
         os.makedirs("temp_model", exist_ok=True)
-        np.save("temp_model/model.npy", weights)
+        np.save("temp_model/weights.npy", weights)
+        with open("temp_model/metadata.json", "w") as f:
+            json.dump(metadata, f)
 
-        # Push model file
+        # Push model files
         api.upload_file(
-            path_or_fileobj="temp_model/model.npy",
-            path_in_repo="model.npy",
+            path_or_fileobj="temp_model/weights.npy",
+            path_in_repo="weights.npy",
+            repo_id=repo_id,
+        )
+        api.upload_file(
+            path_or_fileobj="temp_model/metadata.json",
+            path_in_repo="metadata.json",
             repo_id=repo_id,
         )
 

@@ -3,6 +3,7 @@ import numpy as np
 from cma import CMAEvolutionStrategy
 import matplotlib.pyplot as plt
 import os
+import json
 
 
 class CMAESTrainer:
@@ -108,20 +109,20 @@ class CMAESTrainer:
         # Save training history
         np.save("training_history.npy", self.training_history)
 
-        # Save as numpy array instead of torch tensor
-        data = {
-            "weights": best_weights,
+        np.save("weights.npy", best_weights)
+        metadata = {
             "fitness": best_fitness,
             "observation_space": self.observation_space,
             "action_type": self.action_type,
         }
         if self.action_type == "discrete":
-            data["num_actions"] = self.num_actions
+            metadata["num_actions"] = self.num_actions
         elif self.action_type == "continuous":
-            data["action_dim"] = self.action_dim
-            data["action_bounds"] = self.action_bounds
-        np.save("cmaes_model.npy", data)
-        print("Model saved to cmaes_model.npy")
+            metadata["action_dim"] = self.action_dim
+            metadata["action_bounds"] = self.action_bounds
+        with open("metadata.json", "w") as f:
+            json.dump(metadata, f)
+        print("Model saved to weights.npy and metadata.json")
 
         return best_weights, best_fitness
 
@@ -158,16 +159,17 @@ if __name__ == "__main__":
     best_weights, best_fitness = trainer.train()
 
     print("\nTesting final model...")
-    from src.models.model import CMAESAgent
+    from harpertoken.models.model import CMAESAgent
 
     agent = CMAESAgent("CartPole-v1")
-    loaded_data = np.load("cmaes_model.npy", allow_pickle=True).item()
-    agent.weights = loaded_data["weights"]
-    agent.action_type = loaded_data["action_type"]
+    with open("metadata.json") as f:
+        metadata = json.load(f)
+    agent.weights = np.load("weights.npy")
+    agent.action_type = metadata["action_type"]
     if agent.action_type == "discrete":
-        agent.num_actions = loaded_data["num_actions"]
+        agent.num_actions = metadata["num_actions"]
     elif agent.action_type == "continuous":
-        agent.action_dim = loaded_data["action_dim"]
-        agent.action_bounds = loaded_data["action_bounds"]
+        agent.action_dim = metadata["action_dim"]
+        agent.action_bounds = metadata["action_bounds"]
     mean_reward, std_reward = agent.evaluate(num_episodes=5)
     print(f"Mean reward: {mean_reward}, Std: {std_reward}")

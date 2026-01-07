@@ -3,6 +3,7 @@ import gymnasium as gym
 from huggingface_hub import hf_hub_download
 from huggingface_hub import ModelHubMixin
 import os
+import json
 from pathlib import Path
 from typing import Optional, Dict, Union
 
@@ -59,19 +60,21 @@ class CMAESAgent(ModelHubMixin):
     def _save_pretrained(self, save_directory: Union[str, Path]) -> None:
         """Save model weights"""
         os.makedirs(save_directory, exist_ok=True)
-        save_path = os.path.join(save_directory, "model.npy")
-        data = {
-            "weights": self.weights,
-            "observation_space": self.observation_space,
+        weights_path = os.path.join(save_directory, "weights.npy")
+        metadata_path = os.path.join(save_directory, "metadata.json")
+        np.save(weights_path, self.weights)
+        metadata = {
+            "observation_space": int(self.observation_space),
             "action_type": self.action_type,
             "env_name": self.env_name,
         }
         if self.action_type == "discrete":
-            data["num_actions"] = self.num_actions
+            metadata["num_actions"] = int(self.num_actions)
         elif self.action_type == "continuous":
-            data["action_dim"] = self.action_dim
-            data["action_bounds"] = self.action_bounds
-        np.save(save_path, data)
+            metadata["action_dim"] = int(self.action_dim)
+            metadata["action_bounds"] = self.action_bounds
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f)
 
     @classmethod
     def _from_pretrained(
@@ -91,13 +94,34 @@ class CMAESAgent(ModelHubMixin):
         # Initialize the model
         model = cls(**model_kwargs)
 
-        # Determine the model path
         if os.path.isdir(model_id):
-            model_path = os.path.join(model_id, "model.npy")
+            metadata_path = os.path.join(model_id, "metadata.json")
+            weights_path = os.path.join(model_id, "weights.npy")
+            if os.path.exists(metadata_path):
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+                model.weights = np.load(weights_path)
+                model.observation_space = metadata["observation_space"]
+                model.action_type = metadata["action_type"]
+                model.env_name = metadata["env_name"]
+                model.env = gym.make(model.env_name)
+                if model.action_type == "discrete":
+                    model.num_actions = metadata["num_actions"]
+                    model.action_space = model.num_actions
+                elif model.action_type == "continuous":
+                    model.action_dim = metadata["action_dim"]
+                    model.action_bounds = metadata["action_bounds"]
+                    model.action_space = model.action_dim
+            else:
+                raise ValueError(
+                    "Old insecure model format detected. Pickle loading disabled. "
+                    "Convert to new format: weights.npy and metadata.json."
+                )
         else:
-            model_path = hf_hub_download(
+            # HF Hub
+            metadata_path = hf_hub_download(
                 repo_id=model_id,
-                filename="model.npy",
+                filename="metadata.json",
                 revision=revision,
                 cache_dir=cache_dir,
                 force_download=force_download,
@@ -106,33 +130,30 @@ class CMAESAgent(ModelHubMixin):
                 local_files_only=local_files_only,
                 token=token,
             )
-
-        # Load the model data
-        loaded = np.load(model_path, allow_pickle=True)
-        if isinstance(loaded, np.ndarray) and loaded.ndim > 0:
-            # Assume it's the weights array (for HF models)
-            model.weights = loaded
-            # Assume CartPole-v1 for HF models
-            model.env_name = "CartPole-v1"
-            model.env = gym.make(model.env_name)
-            model.observation_space = model.env.observation_space.shape[0]
-            model.action_type = "discrete"
-            model.num_actions = model.env.action_space.n
-            model.action_space = model.num_actions
-        else:
-            # Dict format
-            model_data = loaded.item()
-            model.weights = model_data["weights"]
-            model.observation_space = model_data["observation_space"]
-            model.action_type = model_data["action_type"]
-            model.env_name = model_data.get("env_name", "CartPole-v1")
+            weights_path = hf_hub_download(
+                repo_id=model_id,
+                filename="weights.npy",
+                revision=revision,
+                cache_dir=cache_dir,
+                force_download=force_download,
+                proxies=proxies,
+                resume_download=resume_download,
+                local_files_only=local_files_only,
+                token=token,
+            )
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+            model.weights = np.load(weights_path)
+            model.observation_space = metadata["observation_space"]
+            model.action_type = metadata["action_type"]
+            model.env_name = metadata["env_name"]
             model.env = gym.make(model.env_name)
             if model.action_type == "discrete":
-                model.num_actions = model_data["num_actions"]
+                model.num_actions = metadata["num_actions"]
                 model.action_space = model.num_actions
             elif model.action_type == "continuous":
-                model.action_dim = model_data["action_dim"]
-                model.action_bounds = model_data["action_bounds"]
+                model.action_dim = metadata["action_dim"]
+                model.action_bounds = metadata["action_bounds"]
                 model.action_space = model.action_dim
 
         return model
